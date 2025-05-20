@@ -41,7 +41,7 @@ async def webhook(request: Request):
                     }
                 }
             ]
-        }
+        },
         # Include tag only if Dialogflow CX is matching against it
          "tag": "GEMINI_FALLBACK"
     })
