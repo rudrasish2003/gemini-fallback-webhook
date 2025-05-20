@@ -2,8 +2,8 @@ from fastapi import FastAPI, Request
 import requests, os
 
 app = FastAPI()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"
+GEMINI_API_KEY = os.getenv("AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8")
+GEMINI_MODEL = "gemini-2.0-flash"
 
 @app.post("/webhook")
 async def webhook(request: Request):
