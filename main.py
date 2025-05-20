@@ -39,5 +39,6 @@ async def webhook(request: Request):
                     }
                 }
             ]
-        }
+        },
+         "tag": "GEMINI_FALLBACK"
     }
