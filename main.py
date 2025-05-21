@@ -8,8 +8,6 @@ app = FastAPI()
 GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"
 GEMINI_MODEL = "gemini-2.0-flash"
 
-CONFIRM_PAGE_ID = "c2bd0e45-a3c4-4ec4-b54b-013e61b41207"
-
 def clean_and_trim_text(text: str) -> str:
     text = re.sub(r"[*_~`]", "", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
@@ -19,66 +17,50 @@ def clean_and_trim_text(text: str) -> str:
 async def handle_webhook_logic(body: dict):
     session_params = body.get("sessionInfo", {}).get("parameters", {})
     user_input = body.get("text", "").lower().strip()
+    reset_params = {}
 
-    full_page_path = body.get("pageInfo", {}).get("currentPage", "")
-    current_page_id = full_page_path.split("/")[-1] if full_page_path else "Unknown"
-    last_page = session_params.get("last_page")
-    update_last_page = full_page_path if current_page_id != CONFIRM_PAGE_ID else last_page
+    if not user_input:
+        user_input = session_params.get("fallback-input", "Hello")
 
-    reply = ""
-    target_page = None
+    # Gemini API call
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_input}]
+            }
+        ]
+    }
 
-    if current_page_id == CONFIRM_PAGE_ID:
-        if user_input in ["yes", "yeah", "yep", "sure"]:
-            if last_page and isinstance(last_page, str):
-                reply = "Okay, taking you back."
-                target_page = last_page
-            else:
-                reply = "I don’t remember where we were. Let’s start over."
-        elif user_input in ["no", "nope", "nah"]:
-            reply = "Alright. Let me know if you need anything else."
-        else:
-            reply = "Please say 'yes' to go back or 'no' to cancel."
-    else:
-        if not user_input:
-            user_input = session_params.get("fallback-input", "Hello")
+    try:
+        response = requests.post(gemini_url, json=payload)
+        response.raise_for_status()
+        gemini_raw = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        cleaned = clean_and_trim_text(gemini_raw)
+    except Exception:
+        cleaned = "Sorry, I couldn't find an answer."
 
-        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": user_input}]
-                }
-            ]
-        }
+    # Reset parameters if input seems like a question (avoid misfilling slot)
+    if "?" in user_input or any(user_input.startswith(w) for w in ["what", "why", "how", "who", "when"]):
+        for key, val in session_params.items():
+            if isinstance(val, str) and val.strip().lower() == user_input:
+                reset_params[key] = None
 
-        try:
-            response = requests.post(gemini_url, json=payload)
-            response.raise_for_status()
-            gemini_raw = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            cleaned = clean_and_trim_text(gemini_raw)
-        except Exception:
-            cleaned = "Sorry, I couldn't find an answer."
+    reply = f"{cleaned}"
 
-        fallback_prompt = "Could you please answer yes or no? Do you have a DOT Medical Card?"
-        reply = f"{cleaned} {fallback_prompt}"
-        target_page = None
-
+    # Build plain Gemini response with optional param reset
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}]
         },
         "session_info": {
             "parameters": {
-                "last_response": reply,
-                "last_page": update_last_page
+                **reset_params,
+                "last_response": reply
             }
         }
     }
-
-    if target_page:
-        response_data["target_page"] = target_page
 
     return JSONResponse(content=response_data)
 
@@ -87,10 +69,7 @@ async def webhook(request: Request):
     body = await request.json()
     return await handle_webhook_logic(body)
 
-# Catch-all POST handler for any other paths not matched by /webhook
 @app.post("/{full_path:path}")
 async def catch_all_post(full_path: str, request: Request):
     body = await request.json()
-    # You can log that this is a fallback catch-all
-    # print(f"Fallback catch-all handler for path: /{full_path}")
     return await handle_webhook_logic(body)
