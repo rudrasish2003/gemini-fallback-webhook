@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import requests
+import re
 
 app = FastAPI()
 
@@ -14,6 +15,20 @@ LOCATION_ID = "us-central1"
 AGENT_ID = "503d60e1-4e8e-420a-b0ef-db6d0e281464"
 FLOW_ID = "00000000-0000-0000-0000-000000000000"
 CONFIRM_PAGE_ID = "c2bd0e45-a3c4-4ec4-b54b-013e61b41207"  # ID, not name
+
+def clean_and_trim_text(text: str) -> str:
+    # Remove bold, italic, markdown syntax
+    text = re.sub(r"[*_~`]", "", text)
+
+    # Remove links or extra formatting if needed
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+
+    # Trim to 30–40 words
+    words = text.strip().split()
+    if len(words) < 30:
+        return text  # Let it be if already short
+    trimmed = " ".join(words[:40])
+    return trimmed
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -32,7 +47,6 @@ async def webhook(request: Request):
     reply = ""
     target_page = None
 
-    # 🧠 Debug logs
     print("📄 Current Page ID:", current_page_id)
     print("📌 Full Page Path:", full_page_path)
     print("📦 Last Stored Page:", last_page)
@@ -42,7 +56,7 @@ async def webhook(request: Request):
         if user_input in ["yes", "yeah", "yep", "sure"]:
             if last_page and isinstance(last_page, str):
                 reply = "Okay, taking you back."
-                target_page = last_page  # ← Must be full page path
+                target_page = last_page
             else:
                 reply = "I don’t remember where we were. Let’s start over."
         elif user_input in ["no", "nope", "nah"]:
@@ -50,7 +64,6 @@ async def webhook(request: Request):
         else:
             reply = "Please say 'yes' to go back or 'no' to cancel."
 
-    # ✅ On other pages: fallback + Gemini + redirect to ConfirmPage
     else:
         if not user_input:
             user_input = session_params.get("fallback-input", "Hello")
@@ -68,7 +81,8 @@ async def webhook(request: Request):
         try:
             response = requests.post(gemini_url, json=payload)
             response.raise_for_status()
-            reply = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            gemini_raw = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            reply = clean_and_trim_text(gemini_raw)
         except Exception as e:
             print("❌ Gemini API Error:", str(e))
             reply = "Sorry, I couldn't find an answer."
@@ -77,7 +91,6 @@ async def webhook(request: Request):
             f"projects/{PROJECT_ID}/locations/{LOCATION_ID}/agents/{AGENT_ID}/flows/{FLOW_ID}/pages/{CONFIRM_PAGE_ID}"
         )
 
-    # ✅ Build final response
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}]
