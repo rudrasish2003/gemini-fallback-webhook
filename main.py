@@ -5,7 +5,7 @@ import re
 
 app = FastAPI()
 
-# Gemini setup (optional)
+# Gemini setup
 GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"
 GEMINI_MODEL = "gemini-2.0-flash"
 
@@ -14,21 +14,14 @@ PROJECT_ID = "intervue-ucxu"
 LOCATION_ID = "us-central1"
 AGENT_ID = "503d60e1-4e8e-420a-b0ef-db6d0e281464"
 FLOW_ID = "00000000-0000-0000-0000-000000000000"
-CONFIRM_PAGE_ID = "c2bd0e45-a3c4-4ec4-b54b-013e61b41207"  # ID, not name
+CONFIRM_PAGE_ID = "c2bd0e45-a3c4-4ec4-b54b-013e61b41207"
 
 def clean_and_trim_text(text: str) -> str:
-    # Remove bold, italic, markdown syntax
+    # Remove markdown formatting
     text = re.sub(r"[*_~`]", "", text)
-
-    # Remove links or extra formatting if needed
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-
-    # Trim to 30–40 words
     words = text.strip().split()
-    if len(words) < 30:
-        return text  # Let it be if already short
-    trimmed = " ".join(words[:40])
-    return trimmed
+    return text if len(words) < 30 else " ".join(words[:40])
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -42,7 +35,7 @@ async def webhook(request: Request):
     full_page_path = body.get("pageInfo", {}).get("currentPage", "")
     current_page_id = full_page_path.split("/")[-1] if full_page_path else "Unknown"
     last_page = session_params.get("last_page")
-    update_last_page = full_page_path  # Save full path
+    update_last_page = full_page_path if current_page_id != CONFIRM_PAGE_ID else last_page
 
     reply = ""
     target_page = None
@@ -51,7 +44,7 @@ async def webhook(request: Request):
     print("📌 Full Page Path:", full_page_path)
     print("📦 Last Stored Page:", last_page)
 
-    # ✅ On ConfirmPage: handle 'yes'/'no'
+    # ✅ If on ConfirmPage: handle 'yes'/'no'
     if current_page_id == CONFIRM_PAGE_ID:
         if user_input in ["yes", "yeah", "yep", "sure"]:
             if last_page and isinstance(last_page, str):
@@ -64,6 +57,7 @@ async def webhook(request: Request):
         else:
             reply = "Please say 'yes' to go back or 'no' to cancel."
 
+    # ✅ Else: use Gemini and prompt again
     else:
         if not user_input:
             user_input = session_params.get("fallback-input", "Hello")
@@ -82,15 +76,19 @@ async def webhook(request: Request):
             response = requests.post(gemini_url, json=payload)
             response.raise_for_status()
             gemini_raw = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            reply = clean_and_trim_text(gemini_raw)
+            cleaned = clean_and_trim_text(gemini_raw)
         except Exception as e:
             print("❌ Gemini API Error:", str(e))
-            reply = "Sorry, I couldn't find an answer."
+            cleaned = "Sorry, I couldn't find an answer."
 
-        target_page = (
-            f"projects/{PROJECT_ID}/locations/{LOCATION_ID}/agents/{AGENT_ID}/flows/{FLOW_ID}/pages/{CONFIRM_PAGE_ID}"
-        )
+        # Append the fallback question to clarify again
+        fallback_prompt = "Could you please answer yes or no? Do you have a DOT Medical Card?"
+        reply = f"{cleaned} {fallback_prompt}"
 
+        # ❗ Do NOT redirect – stay on same page to avoid loop
+        target_page = None
+
+    # ✅ Build final response
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}]
