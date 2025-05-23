@@ -5,24 +5,30 @@ import re
 
 app = FastAPI()
 
-# Gemini configuration
 GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"
 GEMINI_MODEL = "gemini-2.0-flash"
 
-# Clean and trim text helper
 def clean_and_trim_text(text: str) -> str:
     text = re.sub(r"[*_~`]", "", text)
-    text = re.sub(r"\$\$([^$]+)\]\$\$[^\)]+\$\$", r"\1", text)
+    text = re.sub(r"\$\$([^$$]+)\]$$[^)]+$$", r"\1", text)  # Fix regex escape for literal $$
     words = text.strip().split()
     return text if len(words) < 30 else " ".join(words[:40])
 
 async def handle_webhook_logic(body: dict):
-    print("📥 Raw request body:", body)
+    print("📥 Full webhook request body:")
+    print(body)  # DEBUG: Inspect entire incoming request
 
     session_params = body.get("sessionInfo", {}).get("parameters", {})
     query_result = body.get("queryResult", {})
+    original_request = body.get("originalDetectIntentRequest", {})
 
-    # Extract user input with robust audio + text support
+    print("🧾 queryResult:")
+    print(query_result)
+
+    print("🧾 originalDetectIntentRequest:")
+    print(original_request)
+
+    # Extract user input from multiple possible fields for text and voice input
     user_input = (
         body.get("text") or
         query_result.get("transcript") or
@@ -30,20 +36,22 @@ async def handle_webhook_logic(body: dict):
          query_result["interpretations"][0].get("transcript")) or
         query_result.get("text") or
         query_result.get("queryText") or
+        (original_request.get("payload", {})
+            .get("inputs", [{}])[0]
+            .get("rawInputs", [{}])[0]
+            .get("query")) or
         session_params.get("user_input") or
-        "hello"
+        "hello"  # Fallback
     )
-    user_input = user_input.strip().lower()
-    print("✅ Final cleaned user input:", repr(user_input))
 
-    # Build prompt for Gemini
+    user_input = (user_input or "hello").strip().lower()
+    print("✅ Extracted user input:", repr(user_input))
+
     prompt = f"{user_input}\n\nAnswer in 30 to 40 words. Keep it clear and concise."
 
     gemini_url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:"
-        f"generateContent?key={GEMINI_API_KEY}"
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
-
     payload = {
         "contents": [
             {
@@ -73,10 +81,13 @@ async def handle_webhook_logic(body: dict):
         if not gemini_raw:
             raise ValueError("Gemini returned empty response")
 
-        text = clean_and_trim_text(gemini_raw)
-        if len(text) > 400:
-            text = text[:397] + "..."
-        reply = text
+        # Clean and trim Gemini response
+        text = re.sub(r"[*_~`]", "", gemini_raw)
+        text = re.sub(r"\$\$([^$$]+)\]$$[^)]+$$", r"\1", text)
+        words = text.strip().split()
+        reply = text if len(words) < 30 else " ".join(words[:40])
+        if len(reply) > 400:
+            reply = reply[:397] + "..."
 
     except Exception as e:
         print("❌ Gemini API error:", str(e))
@@ -86,7 +97,7 @@ async def handle_webhook_logic(body: dict):
             print("⚠️ Gemini response not available.")
         reply = "Sorry, I couldn't find an answer."
 
-    # Reset form parameters if present
+    # Reset form parameters
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
