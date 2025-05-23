@@ -24,22 +24,25 @@ async def handle_webhook_logic(body: dict):
     if not user_input:
         user_input = session_params.get("fallback-input", "Hello")
 
-    # Clean voice-specific preamble phrases
-    junk_phrases = [
+    # Junk Gemini auto prompts from voice/assistant interfaces
+    junk_inputs = [
+        "okay, i'm ready! what do you need me to explain? just give me the topic.",
         "okay, i'm ready. ask me a question and i'll give you a concise, helpful answer in 30-40 words.",
         "go ahead, i'm listening.",
         "what would you like to know?"
     ]
-    for junk in junk_phrases:
-        if user_input.startswith(junk):
-            user_input = user_input.replace(junk, "").strip()
+
+    # If input matches known junk or is too short, replace it with a valid fallback
+    if user_input in junk_inputs or len(user_input.strip()) < 6:
+        print("🛑 Junk voice input detected. Overriding with fallback query.")
+        user_input = "what is fedex"
 
     full_page_path = body.get("pageInfo", {}).get("currentPage", "")
     current_page_id = full_page_path.split("/")[-1] if full_page_path else "Unknown"
 
-    print("🔤 Cleaned user input:", repr(user_input))
+    print("🔤 Final cleaned user input:", repr(user_input))
 
-    # Construct natural prompt
+    # Build natural Gemini prompt
     prompt = f"{user_input}\n\nExplain clearly in 30–40 words. No formatting. Be concise and helpful."
 
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
@@ -73,7 +76,7 @@ async def handle_webhook_logic(body: dict):
         if not gemini_raw:
             raise ValueError("Gemini returned empty response")
 
-        # Final clean + trim
+        # Clean output
         text = re.sub(r"[*_~`]", "", gemini_raw)
         text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
         words = text.strip().split()
@@ -83,7 +86,7 @@ async def handle_webhook_logic(body: dict):
         print("❌ Gemini API error:", str(e))
         reply = "Sorry, I couldn't find an answer."
 
-    # Reset form params to re-ask
+    # Reset form parameters to re-ask
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
@@ -91,7 +94,7 @@ async def handle_webhook_logic(body: dict):
         if param_id:
             reset_params[param_id] = None
 
-    # Build response
+    # Final response to Dialogflow
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}],
