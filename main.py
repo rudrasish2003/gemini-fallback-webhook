@@ -16,21 +16,28 @@ def clean_and_trim_text(text: str) -> str:
 
 async def handle_webhook_logic(body: dict):
     session_params = body.get("sessionInfo", {}).get("parameters", {})
-    user_input = body.get("text", "").lower().strip()
+
+    # Normalize input
+    user_input = re.sub(r"\s+", " ", body.get("text", "").strip().lower())
+    if not user_input:
+        user_input = session_params.get("fallback-input", "Hello")
 
     full_page_path = body.get("pageInfo", {}).get("currentPage", "")
     current_page_id = full_page_path.split("/")[-1] if full_page_path else "Unknown"
 
-    reply = ""
-    if not user_input:
-        user_input = session_params.get("fallback-input", "Hello")
+    # Build consistent Gemini prompt
+    prompt = (
+        f'The user said: "{user_input}". '
+        "Please respond with a clear, simple explanation in 30 to 40 words. "
+        "Do not use formatting like bold or links. Keep it helpful and to the point."
+    )
 
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": user_input}]
+                "parts": [{"text": prompt}]
             }
         ]
     }
@@ -40,12 +47,13 @@ async def handle_webhook_logic(body: dict):
         response.raise_for_status()
         gemini_raw = response.json()["candidates"][0]["content"]["parts"][0]["text"]
         cleaned = clean_and_trim_text(gemini_raw)
-    except Exception:
+    except Exception as e:
+        print("❌ Gemini API error:", str(e))
         cleaned = "Sorry, I couldn't find an answer."
 
-    reply = f"{cleaned}"
+    reply = cleaned
 
-    # Reset form parameters of the current page
+    # Reset form parameters to re-ask the same question
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
@@ -53,7 +61,6 @@ async def handle_webhook_logic(body: dict):
         if param_id:
             reset_params[param_id] = None
 
-    # Final response with reset form parameters and GEMINI_FULLBACK tag
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}],
