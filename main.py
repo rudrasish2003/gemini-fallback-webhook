@@ -15,6 +15,8 @@ def clean_and_trim_text(text: str) -> str:
     return text if len(words) < 30 else " ".join(words[:40])
 
 async def handle_webhook_logic(body: dict):
+    import re
+
     session_params = body.get("sessionInfo", {}).get("parameters", {})
     
     # Normalize input
@@ -22,15 +24,25 @@ async def handle_webhook_logic(body: dict):
     if not user_input:
         user_input = session_params.get("fallback-input", "Hello")
 
+    # Clean voice-specific preamble phrases
+    junk_phrases = [
+        "okay, i'm ready. ask me a question and i'll give you a concise, helpful answer in 30-40 words.",
+        "go ahead, i'm listening.",
+        "what would you like to know?"
+    ]
+    for junk in junk_phrases:
+        if user_input.startswith(junk):
+            user_input = user_input.replace(junk, "").strip()
+
     full_page_path = body.get("pageInfo", {}).get("currentPage", "")
     current_page_id = full_page_path.split("/")[-1] if full_page_path else "Unknown"
 
-    print("🔤 Normalized user input:", repr(user_input))
+    print("🔤 Cleaned user input:", repr(user_input))
 
-    # Construct simple, direct prompt
+    # Construct natural prompt
     prompt = f"{user_input}\n\nExplain clearly in 30–40 words. No formatting. Be concise and helpful."
 
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [
             {
@@ -61,13 +73,17 @@ async def handle_webhook_logic(body: dict):
         if not gemini_raw:
             raise ValueError("Gemini returned empty response")
 
-        reply = clean_and_trim_text(gemini_raw)
+        # Final clean + trim
+        text = re.sub(r"[*_~`]", "", gemini_raw)
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        words = text.strip().split()
+        reply = text if len(words) < 30 else " ".join(words[:40])
 
     except Exception as e:
         print("❌ Gemini API error:", str(e))
         reply = "Sorry, I couldn't find an answer."
 
-    # Reset form parameters to re-ask
+    # Reset form params to re-ask
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
@@ -75,7 +91,7 @@ async def handle_webhook_logic(body: dict):
         if param_id:
             reset_params[param_id] = None
 
-    # Build response to Dialogflow
+    # Build response
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}],
@@ -90,6 +106,7 @@ async def handle_webhook_logic(body: dict):
     }
 
     return JSONResponse(content=response_data)
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
