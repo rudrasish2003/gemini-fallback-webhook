@@ -15,8 +15,6 @@ def clean_and_trim_text(text: str) -> str:
     return text if len(words) < 30 else " ".join(words[:40])
 
 async def handle_webhook_logic(body: dict):
-    import re
-
     session_params = body.get("sessionInfo", {}).get("parameters", {})
     
     # Normalize input
@@ -24,15 +22,13 @@ async def handle_webhook_logic(body: dict):
     if not user_input:
         user_input = session_params.get("fallback-input", "Hello")
 
-    # Junk Gemini auto prompts from voice/assistant interfaces
+    # Junk phrases common to voice assistants
     junk_inputs = [
         "okay, i'm ready! what do you need me to explain? just give me the topic.",
         "okay, i'm ready. ask me a question and i'll give you a concise, helpful answer in 30-40 words.",
         "go ahead, i'm listening.",
         "what would you like to know?"
     ]
-
-    # If input matches known junk or is too short, replace it with a valid fallback
     if user_input in junk_inputs or len(user_input.strip()) < 6:
         print("🛑 Junk voice input detected. Overriding with fallback query.")
         user_input = "what is fedex"
@@ -42,10 +38,10 @@ async def handle_webhook_logic(body: dict):
 
     print("🔤 Final cleaned user input:", repr(user_input))
 
-    # Build natural Gemini prompt
-    prompt = f"{user_input}\n\nExplain clearly in 30–40 words. No formatting. Be concise and helpful."
+    # Gemini prompt: clear + simple
+    prompt = f"{user_input}\n\nAnswer in 30 to 40 words. Keep it clear and concise."
 
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [
             {
@@ -66,7 +62,7 @@ async def handle_webhook_logic(body: dict):
         candidates = gemini_json.get("candidates", [])
         if candidates:
             parts = candidates[0].get("content", {}).get("parts", [])
-            if parts and "text" in parts[0]:
+            if parts and isinstance(parts[0], dict) and "text" in parts[0]:
                 gemini_raw = parts[0]["text"]
             else:
                 gemini_raw = ""
@@ -77,16 +73,17 @@ async def handle_webhook_logic(body: dict):
             raise ValueError("Gemini returned empty response")
 
         # Clean output
-        text = re.sub(r"[*_~`]", "", gemini_raw)
-        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-        words = text.strip().split()
-        reply = text if len(words) < 30 else " ".join(words[:40])
+        reply = clean_and_trim_text(gemini_raw)
 
     except Exception as e:
         print("❌ Gemini API error:", str(e))
+        try:
+            print("⚠️ Gemini error response:", response.json())
+        except:
+            print("⚠️ Gemini response not available.")
         reply = "Sorry, I couldn't find an answer."
 
-    # Reset form parameters to re-ask
+    # Reset form parameters
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
@@ -94,17 +91,16 @@ async def handle_webhook_logic(body: dict):
         if param_id:
             reset_params[param_id] = None
 
-    # Final response to Dialogflow
     response_data = {
         "fulfillment_response": {
-        "messages": [{
-            "text": {
-                "text": [
-                    f"🔍 You asked: \"{user_input}\"",
-                    f"🤖 Gemini says: {reply}"
-                ]
-            }
-        }],
+            "messages": [{
+                "text": {
+                    "text": [
+                        f"🔍 You asked: \"{user_input}\"",
+                        f"🤖 Gemini says: {reply}"
+                    ]
+                }
+            }],
             "tag": "GEMINI_FULLBACK"
         },
         "session_info": {
@@ -116,7 +112,6 @@ async def handle_webhook_logic(body: dict):
     }
 
     return JSONResponse(content=response_data)
-
 
 @app.post("/webhook")
 async def webhook(request: Request):
