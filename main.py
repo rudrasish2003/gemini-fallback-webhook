@@ -101,7 +101,7 @@ async def handle_webhook_logic(body: dict):
             "text": {
                 "text": [
                     f"🔍 You asked: \"{user_input}\"",
-                    reply
+                    f"🤖 Gemini says: {reply}"
                 ]
             }
         }],
