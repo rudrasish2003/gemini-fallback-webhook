@@ -15,8 +15,6 @@ def clean_and_trim_text(text: str) -> str:
     return text if len(words) < 30 else " ".join(words[:40])
 
 async def handle_webhook_logic(body: dict):
-    import re
-
     session_params = body.get("sessionInfo", {}).get("parameters", {})
 
     # Step 1: Normalize user input
@@ -24,24 +22,12 @@ async def handle_webhook_logic(body: dict):
     if not user_input:
         user_input = session_params.get("fallback-input", "Hello")
 
-    # Step 2: Filter known voice assistant junk
-    junk_inputs = [
-        "okay, i'm ready! what do you need me to explain? just give me the topic.",
-        "okay, i'm ready. ask me a question and i'll give you a concise, helpful answer in 30-40 words.",
-        "go ahead, i'm listening.",
-        "what would you like to know?"
-    ]
-    if user_input in junk_inputs or len(user_input.strip()) < 6:
-        print("🛑 Junk voice input detected. Overriding with fallback query.")
-        user_input = "what is fedex"
-
     print("🔤 Final cleaned user input:", repr(user_input))
 
-    # Step 3: Build Gemini prompt
+    # Step 2: Build prompt for Gemini
     prompt = f"{user_input}\n\nAnswer in 30 to 40 words. Keep it clear and concise."
 
-    # Step 4: Call Gemini API
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [
             {
@@ -59,21 +45,20 @@ async def handle_webhook_logic(body: dict):
         gemini_json = response.json()
         print("📩 Gemini raw response:", gemini_json)
 
-        # Step 5: Extract and clean response
+        # Step 3: Extract and clean all text parts
         candidates = gemini_json.get("candidates", [])
         if candidates:
             parts = candidates[0].get("content", {}).get("parts", [])
-            if parts and isinstance(parts[0], dict) and "text" in parts[0]:
-                gemini_raw = parts[0]["text"]
-            else:
-                gemini_raw = ""
+            gemini_raw = " ".join([
+                p.get("text", "") for p in parts if isinstance(p, dict) and "text" in p
+            ]).strip()
         else:
             gemini_raw = ""
 
         if not gemini_raw:
             raise ValueError("Gemini returned empty response")
 
-        # Trim and clean Gemini output
+        # Step 4: Clean and trim Gemini output
         text = re.sub(r"[*_~`]", "", gemini_raw)
         text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
         words = text.strip().split()
@@ -89,7 +74,7 @@ async def handle_webhook_logic(body: dict):
             print("⚠️ Gemini response not available.")
         reply = "Sorry, I couldn't find an answer."
 
-    # Step 6: Reset form params
+    # Step 5: Reset form parameters
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
@@ -97,7 +82,7 @@ async def handle_webhook_logic(body: dict):
         if param_id:
             reset_params[param_id] = None
 
-    # Step 7: Build Dialogflow response
+    # Step 6: Build response for Dialogflow
     combined_text = f"🔍 You asked: \"{user_input}\"\n🤖 Gemini says: {reply}"
     response_data = {
         "fulfillment_response": {
@@ -117,7 +102,6 @@ async def handle_webhook_logic(body: dict):
     }
 
     return JSONResponse(content=response_data)
-
 
 @app.post("/webhook")
 async def webhook(request: Request):
