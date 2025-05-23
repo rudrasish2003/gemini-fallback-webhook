@@ -97,7 +97,14 @@ async def handle_webhook_logic(body: dict):
     # Final response to Dialogflow
     response_data = {
         "fulfillment_response": {
-            "messages": [{"text": {"text": [reply]}}],
+        "messages": [{
+            "text": {
+                "text": [
+                    f"🔍 You asked: \"{user_input}\"",
+                    reply
+                ]
+            }
+        }],
             "tag": "GEMINI_FULLBACK"
         },
         "session_info": {
