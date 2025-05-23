@@ -2,32 +2,39 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import requests
 import re
+import os
 
 app = FastAPI()
 
-GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"
+GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"# Use environment variables for sensitive keys
 GEMINI_MODEL = "gemini-2.0-flash"
 
 def clean_and_trim_text(text: str) -> str:
     text = re.sub(r"[*_~`]", "", text)
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"$$([^$$]+)\]$$[^)]+$$", r"\1", text)
     words = text.strip().split()
     return text if len(words) < 30 else " ".join(words[:40])
 
 async def handle_webhook_logic(body: dict):
+    # Detailed logging for diagnosis
+    print("📥 Raw request body:", body)
     session_params = body.get("sessionInfo", {}).get("parameters", {})
+    print("🔍 Session parameters:", session_params)
 
     # Step 1: Normalize user input
     user_input = re.sub(r"\s+", " ", body.get("text", "").strip().lower())
     if not user_input:
         user_input = session_params.get("fallback-input", "Hello")
-
+    
     print("🔤 Final cleaned user input:", repr(user_input))
 
     # Step 2: Build prompt for Gemini
     prompt = f"{user_input}\n\nAnswer in 30 to 40 words. Keep it clear and concise."
 
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    gemini_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:"
+        f"generateContent?key={GEMINI_API_KEY}"
+    )
     payload = {
         "contents": [
             {
@@ -60,7 +67,7 @@ async def handle_webhook_logic(body: dict):
 
         # Step 4: Clean and trim Gemini output
         text = re.sub(r"[*_~`]", "", gemini_raw)
-        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        text = re.sub(r"$$([^$$]+)\]$$[^)]+$$", r"\1", text)
         words = text.strip().split()
         reply = text if len(words) < 30 else " ".join(words[:40])
         if len(reply) > 400:
