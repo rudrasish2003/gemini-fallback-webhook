@@ -6,7 +6,7 @@ import os
 
 app = FastAPI()
 
-GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"# Use environment variables for sensitive keys
+GEMINI_API_KEY = "AIzaSyDD8QW1BggDVVMLteDygHCHrD6Ff9Dy0e8"  # Ensuring the API key is secure
 GEMINI_MODEL = "gemini-2.0-flash"
 
 def clean_and_trim_text(text: str) -> str:
@@ -16,16 +16,23 @@ def clean_and_trim_text(text: str) -> str:
     return text if len(words) < 30 else " ".join(words[:40])
 
 async def handle_webhook_logic(body: dict):
-    # Detailed logging for diagnosis
+    # Display the raw request body for diagnostic purposes
     print("📥 Raw request body:", body)
+
+    # Identify where the user input text is located in the body
     session_params = body.get("sessionInfo", {}).get("parameters", {})
     print("🔍 Session parameters:", session_params)
 
-    # Step 1: Normalize user input
-    user_input = re.sub(r"\s+", " ", body.get("text", "").strip().lower())
+    # Examine potential keys for user input
+    user_input = body.get("text", "").strip().lower()
+    alternative_input = session_params.get("user_input", "").strip().lower()  # Replace 'user_input' with actual key
+
     if not user_input:
-        user_input = session_params.get("fallback-input", "Hello")
-    
+        if alternative_input:
+            user_input = alternative_input
+        else:
+            user_input = session_params.get("fallback-input", "Hello")
+
     print("🔤 Final cleaned user input:", repr(user_input))
 
     # Step 2: Build prompt for Gemini
