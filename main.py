@@ -16,7 +16,7 @@ def clean_and_trim_text(text: str) -> str:
 
 async def handle_webhook_logic(body: dict):
     session_params = body.get("sessionInfo", {}).get("parameters", {})
-
+    
     # Normalize input
     user_input = re.sub(r"\s+", " ", body.get("text", "").strip().lower())
     if not user_input:
@@ -25,12 +25,10 @@ async def handle_webhook_logic(body: dict):
     full_page_path = body.get("pageInfo", {}).get("currentPage", "")
     current_page_id = full_page_path.split("/")[-1] if full_page_path else "Unknown"
 
-    # Build consistent Gemini prompt
-    prompt = (
-        f'The user said: "{user_input}". '
-        "Please respond with a clear, simple explanation in 30 to 40 words. "
-        "Do not use formatting like bold or links. Keep it helpful and to the point."
-    )
+    print("🔤 Normalized user input:", repr(user_input))
+
+    # Construct simple, direct prompt
+    prompt = f"{user_input}\n\nExplain clearly in 30–40 words. No formatting. Be concise and helpful."
 
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     payload = {
@@ -42,18 +40,34 @@ async def handle_webhook_logic(body: dict):
         ]
     }
 
+    print("📤 Sending prompt to Gemini:", prompt)
+
     try:
         response = requests.post(gemini_url, json=payload)
         response.raise_for_status()
-        gemini_raw = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-        cleaned = clean_and_trim_text(gemini_raw)
+        gemini_json = response.json()
+        print("📩 Gemini raw response:", gemini_json)
+
+        candidates = gemini_json.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts and "text" in parts[0]:
+                gemini_raw = parts[0]["text"]
+            else:
+                gemini_raw = ""
+        else:
+            gemini_raw = ""
+
+        if not gemini_raw:
+            raise ValueError("Gemini returned empty response")
+
+        reply = clean_and_trim_text(gemini_raw)
+
     except Exception as e:
         print("❌ Gemini API error:", str(e))
-        cleaned = "Sorry, I couldn't find an answer."
+        reply = "Sorry, I couldn't find an answer."
 
-    reply = cleaned
-
-    # Reset form parameters to re-ask the same question
+    # Reset form parameters to re-ask
     form_params = body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", [])
     reset_params = {}
     for param in form_params:
@@ -61,6 +75,7 @@ async def handle_webhook_logic(body: dict):
         if param_id:
             reset_params[param_id] = None
 
+    # Build response to Dialogflow
     response_data = {
         "fulfillment_response": {
             "messages": [{"text": {"text": [reply]}}],
