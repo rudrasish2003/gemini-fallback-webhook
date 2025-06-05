@@ -1,5 +1,4 @@
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
 import os
 from datetime import datetime
 
@@ -8,18 +7,28 @@ app = FastAPI()
 # Ensure transcript folder exists
 os.makedirs("transcripts", exist_ok=True)
 
-class TranscriptPayload(BaseModel):
-    sessionId: str
-    speaker: str
-    transcript: str
-    timestamp: str
-
 @app.post("/ultravox-webhook")
-async def receive_transcript(payload: TranscriptPayload):
-    file_path = f"transcripts/{payload.sessionId}.txt"
+async def receive_transcript(request: Request):
+    try:
+        # Try to parse the incoming JSON body
+        data = await request.json()
+        print("📥 Received JSON Payload:", data)
 
-    line = f"[{payload.timestamp}] {payload.speaker}: {payload.transcript}\n"
-    with open(file_path, "a", encoding="utf-8") as f:
-        f.write(line)
+        # Extract values with defaults in case fields are missing
+        session_id = data.get("sessionId") or data.get("session_id", "unknown_session")
+        speaker = data.get("speaker") or data.get("agent", "unknown_speaker")
+        transcript = data.get("transcript") or data.get("text", "")
+        timestamp = data.get("timestamp") or data.get("time", datetime.utcnow().isoformat())
 
-    return {"status": "received"}
+        # Compose and write to file
+        file_path = f"transcripts/{session_id}.txt"
+        line = f"[{timestamp}] {speaker}: {transcript}\n"
+
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(line)
+
+        return {"status": "received"}
+
+    except Exception as e:
+        print("❌ Error processing webhook:", str(e))
+        return {"status": "error", "message": str(e)}
