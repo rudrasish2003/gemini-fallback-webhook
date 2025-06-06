@@ -55,20 +55,28 @@ async def receive_transcript(request: Request):
             # Extract detailed candidate info from summary text
             parsed_info = {}
 
-            # Define patterns to extract meaningfully
             patterns = {
-                "fedex_experience": r"(worked for FedEx[^.,;]*)",
+                "interested_in_role": r"(interested.*?position|not interested)",
+                "fedex_experience": r"(worked for FedEx.*?)(?:\.|,| and| but)",
+                "fedex_id": r"FedEx ID.*?['\"]?([A-Za-z0-9\-]+)['\"]?",
+                "fedex_last_working_day": r"last working day was in ([\w\s\d]+)",
+                "reason_for_leaving": r"reason for leaving[^.]*",
                 "dot_card": r"(has|possess|with)(.*?)DOT Medical Card",
                 "transportation": r"(reliable transportation[^.,;]*)",
                 "availability": r"(available to start[^.,;]*)",
-                "age": r"(over 21|above 21|under 21[^.,;]*)",
-                "background_check": r"(background check[^.,;]*|drug test[^.,;]*)",
-                "reason_for_leaving": r"(reason for leaving[^.,;]*)",
+                "age": r"(over 21|above 21|under 21|[Aa]ge[^.,;]*)",
+                "background_check": r"(pass[^.]*background check|drug test|physical)",
             }
 
             for key, pattern in patterns.items():
                 match = re.search(pattern, full_summary, re.IGNORECASE)
-                parsed_info[key] = match.group(0).strip() if match else "Not mentioned"
+                if match:
+                    if key == "fedex_id":
+                        parsed_info[key] = match.group(1).strip()
+                    else:
+                        parsed_info[key] = match.group(0).strip()
+                else:
+                    parsed_info[key] = "Not mentioned"
 
             print("\n📦 Parsed Candidate Information:")
             for k, v in parsed_info.items():
