@@ -36,14 +36,14 @@ async def receive_transcript(request: Request):
                 "text": transcript
             })
 
-            # Store Q&A
+            # Track Q&A pairs
             if "?" in transcript.lower() and speaker.lower() == "agent":
                 sessions[session_id]["qa"].append({"question": transcript, "answer": ""})
             elif speaker.lower() != "agent" and sessions[session_id]["qa"]:
                 if sessions[session_id]["qa"][-1]["answer"] == "":
                     sessions[session_id]["qa"][-1]["answer"] = transcript
 
-        # Handle end of call
+        # On call end
         if data.get("event") == "call.ended" and call_data:
             short_summary = call_data.get("shortSummary", "")
             full_summary = call_data.get("summary", "")
@@ -52,18 +52,25 @@ async def receive_transcript(request: Request):
             print(f"📋 Short Summary:\n{short_summary}")
             print(f"📝 Full Summary:\n{full_summary}")
 
-            # ⬇️ Parse full summary into structured JSON
-            parsed_info = {
-                "has_fedex_experience": "fedex" in full_summary.lower(),
-                "has_dot_card": bool(re.search(r"(has|possess|with)\s+(a\s+)?(valid\s+)?dot medical card", full_summary.lower())),
-                "has_transportation": "transportation" in full_summary.lower() and "no" not in full_summary.lower(),
-                "available_to_start": "available to start" in full_summary.lower(),
-                "over_21": "over 21" in full_summary.lower() or "above 21" in full_summary.lower(),
-                "part_time_or_full_time": "part-time" in full_summary.lower() and "full-time" in full_summary.lower(),
-                "drug_test_clearance": "pass a background check" in full_summary.lower() or "drug test" in full_summary.lower()
+            # Extract detailed candidate info from summary text
+            parsed_info = {}
+
+            # Define patterns to extract meaningfully
+            patterns = {
+                "fedex_experience": r"(worked for FedEx[^.,;]*)",
+                "dot_card": r"(has|possess|with)(.*?)DOT Medical Card",
+                "transportation": r"(reliable transportation[^.,;]*)",
+                "availability": r"(available to start[^.,;]*)",
+                "age": r"(over 21|above 21|under 21[^.,;]*)",
+                "background_check": r"(background check[^.,;]*|drug test[^.,;]*)",
+                "reason_for_leaving": r"(reason for leaving[^.,;]*)",
             }
 
-            print("\n📦 Parsed Info (from summary):")
+            for key, pattern in patterns.items():
+                match = re.search(pattern, full_summary, re.IGNORECASE)
+                parsed_info[key] = match.group(0).strip() if match else "Not mentioned"
+
+            print("\n📦 Parsed Candidate Information:")
             for k, v in parsed_info.items():
                 print(f"{k}: {v}")
 
@@ -75,7 +82,7 @@ async def receive_transcript(request: Request):
             for line in sessions[session_id]["dialog"]:
                 print(f"[{line['timestamp']}] {line['speaker']}: {line['text']}")
 
-            # Clean memory
+            # Cleanup
             sessions.pop(session_id, None)
 
         return {"status": "received"}
