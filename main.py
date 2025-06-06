@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Request
 from datetime import datetime
+import re
 
 app = FastAPI()
 
-# Store session data in memory
 sessions = {}
 
 @app.post("/ultravox-webhook")
@@ -26,12 +26,9 @@ async def receive_transcript(request: Request):
 
         # Initialize session memory
         if session_id not in sessions:
-            sessions[session_id] = {
-                "dialog": [],
-                "qa": []
-            }
+            sessions[session_id] = {"dialog": [], "qa": []}
 
-        # Save dialog line
+        # Store dialogue
         if transcript:
             sessions[session_id]["dialog"].append({
                 "timestamp": timestamp,
@@ -39,14 +36,14 @@ async def receive_transcript(request: Request):
                 "text": transcript
             })
 
-            # Build Q&A dynamically
-            if "?" in transcript and speaker.lower() == "agent":
+            # Store Q&A
+            if "?" in transcript.lower() and speaker.lower() == "agent":
                 sessions[session_id]["qa"].append({"question": transcript, "answer": ""})
             elif speaker.lower() != "agent" and sessions[session_id]["qa"]:
                 if sessions[session_id]["qa"][-1]["answer"] == "":
                     sessions[session_id]["qa"][-1]["answer"] = transcript
 
-        # Handle call end
+        # Handle end of call
         if data.get("event") == "call.ended" and call_data:
             short_summary = call_data.get("shortSummary", "")
             full_summary = call_data.get("summary", "")
@@ -55,7 +52,22 @@ async def receive_transcript(request: Request):
             print(f"📋 Short Summary:\n{short_summary}")
             print(f"📝 Full Summary:\n{full_summary}")
 
-            print(f"\n📚 Candidate Q&A:")
+            # ⬇️ Parse full summary into structured JSON
+            parsed_info = {
+                "has_fedex_experience": "fedex" in full_summary.lower(),
+                "has_dot_card": bool(re.search(r"(has|possess|with)\s+(a\s+)?(valid\s+)?dot medical card", full_summary.lower())),
+                "has_transportation": "transportation" in full_summary.lower() and "no" not in full_summary.lower(),
+                "available_to_start": "available to start" in full_summary.lower(),
+                "over_21": "over 21" in full_summary.lower() or "above 21" in full_summary.lower(),
+                "part_time_or_full_time": "part-time" in full_summary.lower() and "full-time" in full_summary.lower(),
+                "drug_test_clearance": "pass a background check" in full_summary.lower() or "drug test" in full_summary.lower()
+            }
+
+            print("\n📦 Parsed Info (from summary):")
+            for k, v in parsed_info.items():
+                print(f"{k}: {v}")
+
+            print("\n📚 Candidate Q&A:")
             for pair in sessions[session_id]["qa"]:
                 print(f"Q: {pair['question']}\nA: {pair['answer']}\n")
 
@@ -63,7 +75,7 @@ async def receive_transcript(request: Request):
             for line in sessions[session_id]["dialog"]:
                 print(f"[{line['timestamp']}] {line['speaker']}: {line['text']}")
 
-            # Optional: Clear memory to free up space
+            # Clean memory
             sessions.pop(session_id, None)
 
         return {"status": "received"}
