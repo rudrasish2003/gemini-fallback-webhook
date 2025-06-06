@@ -3,7 +3,6 @@ from datetime import datetime
 import re
 
 app = FastAPI()
-
 sessions = {}
 
 @app.post("/ultravox-webhook")
@@ -24,11 +23,10 @@ async def receive_transcript(request: Request):
         transcript = data.get("transcript") or data.get("text", "")
         timestamp = data.get("timestamp") or data.get("time") or datetime.utcnow().isoformat()
 
-        # Initialize session memory
         if session_id not in sessions:
             sessions[session_id] = {"dialog": [], "qa": []}
 
-        # Store dialogue
+        # Track conversation
         if transcript:
             sessions[session_id]["dialog"].append({
                 "timestamp": timestamp,
@@ -36,14 +34,13 @@ async def receive_transcript(request: Request):
                 "text": transcript
             })
 
-            # Track Q&A pairs
             if "?" in transcript.lower() and speaker.lower() == "agent":
                 sessions[session_id]["qa"].append({"question": transcript, "answer": ""})
             elif speaker.lower() != "agent" and sessions[session_id]["qa"]:
                 if sessions[session_id]["qa"][-1]["answer"] == "":
                     sessions[session_id]["qa"][-1]["answer"] = transcript
 
-        # On call end
+        # On call end, extract and parse
         if data.get("event") == "call.ended" and call_data:
             short_summary = call_data.get("shortSummary", "")
             full_summary = call_data.get("summary", "")
@@ -52,20 +49,19 @@ async def receive_transcript(request: Request):
             print(f"📋 Short Summary:\n{short_summary}")
             print(f"📝 Full Summary:\n{full_summary}")
 
-            # Extract detailed candidate info from summary text
             parsed_info = {}
 
             patterns = {
-                "interested_in_role": r"(interested.*?position|not interested)",
-                "fedex_experience": r"(worked for FedEx.*?)(?:\.|,| and| but)",
-                "fedex_id": r"FedEx ID.*?['\"]?([A-Za-z0-9\-]+)['\"]?",
-                "fedex_last_working_day": r"last working day was in ([\w\s\d]+)",
-                "reason_for_leaving": r"reason for leaving[^.]*",
-                "dot_card": r"(has|possess|with)(.*?)DOT Medical Card",
-                "transportation": r"(reliable transportation[^.,;]*)",
-                "availability": r"(available to start[^.,;]*)",
-                "age": r"(over 21|above 21|under 21|[Aa]ge[^.,;]*)",
-                "background_check": r"(pass[^.]*background check|drug test|physical)",
+                "interested_in_role": r"(expressed interest.*?position|not interested)",
+                "fedex_experience": r"(former FedEx driver|worked for FedEx[^.,]*)",
+                "fedex_id": r"FedEx ID.*?[\"']?([A-Za-z0-9\-]+)[\"']?",
+                "fedex_last_working_day": r"last working day (?:was|is|in)\s+([\w\s\d]+)",
+                "reason_for_leaving": r"(left .*? to .*?)[.,]",
+                "dot_card": r"(has|have|possess|with)[^.,;]*DOT Medical Card",
+                "transportation": r"(reliable transportation|no reliable transportation)",
+                "availability": r"(available to (?:start|work)[^.,;]*)",
+                "age": r"(\d{2}-year-old|over 21|under 21|above 21)",
+                "background_check": r"(pass[^.,;]*background check[^.,;]*|drug test[^.,;]*|physical[^.,;]*)"
             }
 
             for key, pattern in patterns.items():
@@ -90,7 +86,6 @@ async def receive_transcript(request: Request):
             for line in sessions[session_id]["dialog"]:
                 print(f"[{line['timestamp']}] {line['speaker']}: {line['text']}")
 
-            # Cleanup
             sessions.pop(session_id, None)
 
         return {"status": "received"}
