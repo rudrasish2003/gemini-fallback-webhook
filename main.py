@@ -3,13 +3,30 @@ from datetime import datetime
 import re
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+from email_validator import validate_email, EmailNotValidError
 import os
 
 app = FastAPI()
 sessions = {}
 
-# ✅ Regex for email detection
-EMAIL_REGEX = re.compile(r"[\w\.-]+@[\w\.-]+\.\w+")
+# ✅ Normalize and extract email from text like: "john dot doe at gmail dot com"
+def normalize_and_extract_email(text: str):
+    cleaned = (
+        text.lower()
+        .replace(" at ", "@")
+        .replace(" dot ", ".")
+        .replace(" underscore ", "_")
+        .replace(" dash ", "-")
+        .replace(" ", "")
+    )
+    match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", cleaned)
+    if match:
+        try:
+            valid = validate_email(match.group(0))
+            return valid.email
+        except EmailNotValidError:
+            return None
+    return None
 
 # ✅ SendGrid email sender
 def send_verification_email(to_email):
@@ -55,7 +72,7 @@ async def receive_transcript(request: Request):
         if session_id not in sessions:
             sessions[session_id] = {"dialog": [], "qa": [], "email_sent": False}
 
-        # Track dialogue
+        # Track conversation
         if transcript:
             sessions[session_id]["dialog"].append({
                 "timestamp": timestamp,
@@ -63,23 +80,21 @@ async def receive_transcript(request: Request):
                 "text": transcript
             })
 
-            # Q&A tracker
+            # Q&A tracking
             if "?" in transcript.lower() and speaker.lower() == "agent":
                 sessions[session_id]["qa"].append({"question": transcript, "answer": ""})
             elif speaker.lower() != "agent" and sessions[session_id]["qa"]:
                 if sessions[session_id]["qa"][-1]["answer"] == "":
                     sessions[session_id]["qa"][-1]["answer"] = transcript
 
-            # ✅ Real-time email detection and send
-            if not sessions[session_id]["email_sent"]:
-                email_match = EMAIL_REGEX.search(transcript)
-                if email_match:
-                    email = email_match.group(0)
-                    if send_verification_email(email):
-                        sessions[session_id]["email_sent"] = True
-                        print(f"📨 Sent verification email to: {email}")
+            # ✅ Real-time email spell check and sending
+            if not sessions[session_id]["email_sent"] and speaker.lower() != "agent":
+                normalized_email = normalize_and_extract_email(transcript)
+                if normalized_email and send_verification_email(normalized_email):
+                    sessions[session_id]["email_sent"] = True
+                    print(f"📨 Sent verification email to: {normalized_email}")
 
-        # ✅ On call end: log everything and cleanup
+        # ✅ On call end
         if data.get("event") == "call.ended" and call_data:
             short_summary = call_data.get("shortSummary", "")
             full_summary = call_data.get("summary", "")
@@ -96,7 +111,6 @@ async def receive_transcript(request: Request):
             for line in sessions[session_id]["dialog"]:
                 print(f"[{line['timestamp']}] {line['speaker']}: {line['text']}")
 
-            # ✅ cleanup
             sessions.pop(session_id, None)
 
         return {"status": "received"}
